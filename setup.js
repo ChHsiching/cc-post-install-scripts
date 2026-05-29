@@ -320,7 +320,7 @@ async function deployEccRules(config) {
     return false;
   }
 
-  const { result, elapsed } = await runWithSpinner("deploying rules...", "node", [installScript, profile]);
+  const { result, elapsed } = await runWithSpinner("deploying rules...", "node", [installScript, "--profile", profile]);
 
   if (result.ok) {
     logOk(`ECC rules deployed (${profile} profile)`);
@@ -434,9 +434,9 @@ async function main() {
   }
 
   checkPrerequisites();
-  addMarketplaces(config);
+  await addMarketplaces(config);
   await updateMarketplaces();
-  const pluginResults = installPlugins(config);
+  const pluginResults = await installPlugins(config);
   await deployEccRules(config);
   mergeSettings(config);
 
