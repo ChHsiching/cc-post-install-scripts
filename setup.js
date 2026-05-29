@@ -156,13 +156,18 @@ function checkPrerequisites() {
   logTime(((Date.now() - t) / 1000).toFixed(1));
 }
 
-function addMarketplaces(config) {
-  logStep(`Adding marketplaces (${Object.keys(config.marketplaces).length})`);
+async function addMarketplaces(config) {
+  const entries = Object.entries(config.marketplaces);
+  logStep(`Adding marketplaces (${entries.length})`);
+  if (DRY_RUN) {
+    for (const [, repo] of entries) dryRun("claude", ["plugin", "marketplace", "add", repo]);
+    return;
+  }
+
   const t = Date.now();
 
-  for (const [name, repo] of Object.entries(config.marketplaces)) {
-    const result = exec("claude", ["plugin", "marketplace", "add", repo]);
-    if (DRY_RUN) continue;
+  for (const [name, repo] of entries) {
+    const { result } = await runWithSpinner(`adding ${name}...`, "claude", ["plugin", "marketplace", "add", repo]);
 
     if (result.ok) {
       logOk(`${name}: added (${repo})`);
@@ -176,7 +181,7 @@ function addMarketplaces(config) {
     }
   }
 
-  if (!DRY_RUN) logTime(((Date.now() - t) / 1000).toFixed(1));
+  logTime(((Date.now() - t) / 1000).toFixed(1));
 }
 
 // --- Steps (async, slow, with spinner) ---
@@ -194,13 +199,13 @@ async function updateMarketplaces() {
   logTime(elapsed);
 }
 
-function tryInstall(plugin) {
+async function tryInstallAsync(plugin) {
   if (DRY_RUN) {
     dryRun("claude", ["plugin", "install", plugin]);
     return { ok: true, already: false };
   }
 
-  const result = run("claude", ["plugin", "install", plugin]);
+  const result = await runAsync("claude", ["plugin", "install", plugin]);
   if (result.ok) {
     return { ok: true, already: false };
   }
@@ -211,37 +216,57 @@ function tryInstall(plugin) {
   return { ok: false, reason: lastLine(combined) };
 }
 
-function installPlugins(config) {
-  logStep(`Installing plugins (${config.plugins.length})`);
-  const t = Date.now();
+async function installPlugins(config) {
+  const plugins = config.plugins;
+  logStep(`Installing plugins (${plugins.length})`);
+  if (DRY_RUN) {
+    for (const plugin of plugins) dryRun("claude", ["plugin", "install", plugin]);
+    return { succeeded: plugins, failed: [] };
+  }
 
+  const t = Date.now();
   const succeeded = [];
   const failed = [];
 
-  for (const plugin of config.plugins) {
-    const first = tryInstall(plugin);
+  let startTime = startSpinner(`0/${plugins.length}`);
+
+  for (let i = 0; i < plugins.length; i++) {
+    const plugin = plugins[i];
+
+    // Update spinner label with progress
+    if (spinnerInterval) clearInterval(spinnerInterval);
+    spinnerInterval = setInterval(() => {
+      const elapsed = ((Date.now() - t) / 1000).toFixed(0);
+      const frame = SPINNER_FRAMES[spinnerFrame++ % SPINNER_FRAMES.length];
+      process.stdout.write(`\r  \x1b[36m${frame}\x1b[0m ${i + 1}/${plugins.length} ${plugin} \x1b[2m${elapsed}s\x1b[0m`);
+    }, 80);
+
+    const first = await tryInstallAsync(plugin);
+    stopSpinner(startTime);
+
     if (first.ok) {
-      if (!DRY_RUN) logOk(`${plugin}${first.already ? ": already installed" : ""}`);
+      logOk(`${plugin}${first.already ? ": already installed" : ""}`);
       succeeded.push(plugin);
-      continue;
+    } else {
+      logWarn(`${plugin}: 1st attempt failed, retrying...`);
+      startTime = startSpinner(`${i + 1}/${plugins.length}`);
+      const retry = await tryInstallAsync(plugin);
+      stopSpinner(startTime);
+
+      if (retry.ok) {
+        logOk(`${plugin}: installed on retry`);
+        succeeded.push(plugin);
+      } else {
+        const reason = retry.reason || "unknown error";
+        logErr(`${plugin}: ${reason}`);
+        failed.push({ plugin, reason });
+      }
     }
 
-    if (!DRY_RUN) logWarn(`${plugin}: 1st attempt failed, retrying...`);
-    const retry = tryInstall(plugin);
-    if (retry.ok) {
-      if (!DRY_RUN) logOk(`${plugin}: installed on retry`);
-      succeeded.push(plugin);
-      continue;
-    }
-
-    if (!DRY_RUN) {
-      const reason = retry.reason || "unknown error";
-      logErr(`${plugin}: ${reason}`);
-      failed.push({ plugin, reason });
-    }
+    if (i < plugins.length - 1) startTime = startSpinner(`${i + 1}/${plugins.length}`);
   }
 
-  if (!DRY_RUN) logTime(((Date.now() - t) / 1000).toFixed(1));
+  logTime(((Date.now() - t) / 1000).toFixed(1));
   return { succeeded, failed };
 }
 

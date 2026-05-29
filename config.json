@@ -42,7 +42,7 @@
   ],
   "ecc": {
     "pluginRef": "ecc@ecc",
-    "rulesProfile": "common"
+    "rulesProfile": "developer"
   },
   "settings": {
     "skipDangerousModePermissionPrompt": true,
