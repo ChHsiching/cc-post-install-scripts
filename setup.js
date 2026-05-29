@@ -1,10 +1,13 @@
 #!/usr/bin/env node
 "use strict";
 
-const { execFileSync } = require("child_process");
+const { execFileSync, execFile } = require("child_process");
+const { promisify } = require("util");
 const fs = require("fs");
 const path = require("path");
 const os = require("os");
+
+const execFileAsync = promisify(execFile);
 
 const CONFIG_PATH = path.join(__dirname, "config.json");
 const DRY_RUN = process.argv.includes("--dry-run");
@@ -36,7 +39,7 @@ function stopSpinner(startTime) {
     spinnerInterval = null;
   }
   const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
-  process.stdout.write(`\r\x1b[2K`);
+  process.stdout.write("\r\x1b[2K");
   return elapsed;
 }
 
@@ -71,7 +74,7 @@ function lastLine(text) {
   return lines[lines.length - 1] || "";
 }
 
-// --- Execution ---
+// --- Execution (sync, for quick ops) ---
 
 function run(file, args) {
   const opts = { encoding: "utf-8", stdio: ["pipe", "pipe", "pipe"] };
@@ -95,7 +98,27 @@ function exec(file, args) {
   return DRY_RUN ? dryRun(file, args) : run(file, args);
 }
 
-// --- Steps ---
+// --- Execution (async, for slow ops with spinner) ---
+
+async function runAsync(file, args) {
+  const opts = { encoding: "utf-8" };
+  if (IS_WIN) opts.shell = true;
+  try {
+    const { stdout } = await execFileAsync(file, args, opts);
+    return { ok: true, stdout: stdout.trim() };
+  } catch (e) {
+    return { ok: false, stderr: (e.stderr || "").trim(), stdout: (e.stdout || "").trim(), error: e.message };
+  }
+}
+
+async function runWithSpinner(label, file, args) {
+  const startTime = startSpinner(label);
+  const result = await runAsync(file, args);
+  const elapsed = stopSpinner(startTime);
+  return { result, elapsed };
+}
+
+// --- Steps (sync, quick) ---
 
 function checkPrerequisites() {
   logStep("Checking prerequisites");
@@ -156,7 +179,9 @@ function addMarketplaces(config) {
   if (!DRY_RUN) logTime(((Date.now() - t) / 1000).toFixed(1));
 }
 
-function updateMarketplaces() {
+// --- Steps (async, slow, with spinner) ---
+
+async function updateMarketplaces() {
   logStep("Updating marketplace caches");
 
   if (DRY_RUN) {
@@ -164,12 +189,7 @@ function updateMarketplaces() {
     return;
   }
 
-  const label = "updating...";
-  const startTime = startSpinner(label);
-
-  run("claude", ["plugin", "marketplace", "update"]);
-
-  const elapsed = stopSpinner(startTime);
+  const { elapsed } = await runWithSpinner("updating...", "claude", ["plugin", "marketplace", "update"]);
   logOk("All marketplaces updated");
   logTime(elapsed);
 }
@@ -225,7 +245,7 @@ function installPlugins(config) {
   return { succeeded, failed };
 }
 
-function deployEccRules(config) {
+async function deployEccRules(config) {
   logStep("Deploying ECC rules");
 
   const { pluginRef, rulesProfile: profile } = config.ecc;
@@ -275,12 +295,7 @@ function deployEccRules(config) {
     return false;
   }
 
-  const label = "deploying rules...";
-  const spinnerStart = startSpinner(label);
-
-  const result = run("node", [installScript, profile]);
-
-  const elapsed = stopSpinner(spinnerStart);
+  const { result, elapsed } = await runWithSpinner("deploying rules...", "node", [installScript, profile]);
 
   if (result.ok) {
     logOk(`ECC rules deployed (${profile} profile)`);
@@ -380,7 +395,7 @@ function printReport(pluginResults, totalTime) {
 
 // --- Main ---
 
-function main() {
+async function main() {
   const totalStart = Date.now();
   console.log(`\x1b[1mClaude Code Post-Install Script\x1b[0m${DRY_RUN ? " \x1b[36m(dry-run)\x1b[0m" : ""}`);
   console.log("-".repeat(35));
@@ -395,9 +410,9 @@ function main() {
 
   checkPrerequisites();
   addMarketplaces(config);
-  updateMarketplaces();
+  await updateMarketplaces();
   const pluginResults = installPlugins(config);
-  deployEccRules(config);
+  await deployEccRules(config);
   mergeSettings(config);
 
   const totalTime = ((Date.now() - totalStart) / 1000).toFixed(1);
