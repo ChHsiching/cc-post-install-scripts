@@ -5,7 +5,7 @@
     "pua-skills": "tanweai/pua",
     "karpathy-skills": "forrestchang/andrej-karpathy-skills",
     "thedotmack": "thedotmack/claude-mem",
-    "everything-claude-code": "affaan-m/ECC"
+    "ecc": "affaan-m/ECC"
   },
   "plugins": [
     "superpowers@claude-plugins-official",
@@ -38,10 +38,10 @@
     "pua@pua-skills",
     "andrej-karpathy-skills@karpathy-skills",
     "claude-mem@thedotmack",
-    "everything-claude-code@everything-claude-code"
+    "ecc@ecc"
   ],
   "ecc": {
-    "pluginRef": "everything-claude-code@everything-claude-code",
+    "pluginRef": "ecc@ecc",
     "rulesProfile": "common"
   },
   "settings": {

@@ -9,6 +9,36 @@ const os = require("os");
 const CONFIG_PATH = path.join(__dirname, "config.json");
 const DRY_RUN = process.argv.includes("--dry-run");
 const IS_WIN = process.platform === "win32";
+const SPINNER_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+
+// --- Spinner & Timer ---
+
+let spinnerInterval = null;
+let spinnerFrame = 0;
+
+function startSpinner(label) {
+  spinnerFrame = 0;
+  const startTime = Date.now();
+
+  spinnerInterval = setInterval(() => {
+    const elapsed = ((Date.now() - startTime) / 1000).toFixed(0);
+    const frame = SPINNER_FRAMES[spinnerFrame % SPINNER_FRAMES.length];
+    spinnerFrame++;
+    process.stdout.write(`\r  \x1b[36m${frame}\x1b[0m ${label} \x1b[2m${elapsed}s\x1b[0m`);
+  }, 80);
+
+  return startTime;
+}
+
+function stopSpinner(startTime) {
+  if (spinnerInterval) {
+    clearInterval(spinnerInterval);
+    spinnerInterval = null;
+  }
+  const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
+  process.stdout.write(`\r\x1b[2K`);
+  return elapsed;
+}
 
 // --- Logging ---
 
@@ -30,6 +60,10 @@ function logErr(msg) {
 
 function logDry(msg) {
   console.log(`  \x1b[36m[DRY]\x1b[0m ${msg}`);
+}
+
+function logTime(elapsed) {
+  console.log(`  \x1b[2m${elapsed}s\x1b[0m`);
 }
 
 function lastLine(text) {
@@ -65,6 +99,7 @@ function exec(file, args) {
 
 function checkPrerequisites() {
   logStep("Checking prerequisites");
+  const t = Date.now();
 
   if (DRY_RUN) {
     logDry("Would check: claude --version");
@@ -94,10 +129,13 @@ function checkPrerequisites() {
     logErr("settings.json not found. Please run cc-switch first.");
     process.exit(1);
   }
+
+  logTime(((Date.now() - t) / 1000).toFixed(1));
 }
 
 function addMarketplaces(config) {
   logStep(`Adding marketplaces (${Object.keys(config.marketplaces).length})`);
+  const t = Date.now();
 
   for (const [name, repo] of Object.entries(config.marketplaces)) {
     const result = exec("claude", ["plugin", "marketplace", "add", repo]);
@@ -114,13 +152,26 @@ function addMarketplaces(config) {
       }
     }
   }
+
+  if (!DRY_RUN) logTime(((Date.now() - t) / 1000).toFixed(1));
 }
 
 function updateMarketplaces() {
   logStep("Updating marketplace caches");
 
-  exec("claude", ["plugin", "marketplace", "update"]);
-  if (!DRY_RUN) logOk("All marketplaces updated");
+  if (DRY_RUN) {
+    dryRun("claude", ["plugin", "marketplace", "update"]);
+    return;
+  }
+
+  const label = "updating...";
+  const startTime = startSpinner(label);
+
+  run("claude", ["plugin", "marketplace", "update"]);
+
+  const elapsed = stopSpinner(startTime);
+  logOk("All marketplaces updated");
+  logTime(elapsed);
 }
 
 function tryInstall(plugin) {
@@ -142,6 +193,7 @@ function tryInstall(plugin) {
 
 function installPlugins(config) {
   logStep(`Installing plugins (${config.plugins.length})`);
+  const t = Date.now();
 
   const succeeded = [];
   const failed = [];
@@ -169,6 +221,7 @@ function installPlugins(config) {
     }
   }
 
+  if (!DRY_RUN) logTime(((Date.now() - t) / 1000).toFixed(1));
   return { succeeded, failed };
 }
 
@@ -184,10 +237,12 @@ function deployEccRules(config) {
     return true;
   }
 
+  const t = Date.now();
   const cacheBase = path.join(os.homedir(), ".claude", "plugins", "cache", marketplaceName, pluginName);
   if (!fs.existsSync(cacheBase)) {
     logErr(`ECC cache directory not found: ${cacheBase}`);
-    logErr("Make sure everything-claude-code plugin is installed before deploying rules.");
+    logErr("Make sure the ecc plugin is installed before deploying rules.");
+    logTime(((Date.now() - t) / 1000).toFixed(1));
     return false;
   }
 
@@ -207,6 +262,7 @@ function deployEccRules(config) {
 
   if (versions.length === 0) {
     logErr("No ECC versions found in cache");
+    logTime(((Date.now() - t) / 1000).toFixed(1));
     return false;
   }
 
@@ -215,20 +271,30 @@ function deployEccRules(config) {
 
   if (!fs.existsSync(installScript)) {
     logErr(`ECC install script not found: ${installScript}`);
+    logTime(((Date.now() - t) / 1000).toFixed(1));
     return false;
   }
 
+  const label = "deploying rules...";
+  const spinnerStart = startSpinner(label);
+
   const result = run("node", [installScript, profile]);
+
+  const elapsed = stopSpinner(spinnerStart);
+
   if (result.ok) {
     logOk(`ECC rules deployed (${profile} profile)`);
+    logTime(elapsed);
     return true;
   }
   logErr(`ECC rules deployment failed: ${lastLine(result.stderr || result.stdout)}`);
+  logTime(elapsed);
   return false;
 }
 
 function mergeSettings(config) {
   logStep("Merging settings into ~/.claude/settings.json");
+  const t = Date.now();
 
   const settingsPath = path.join(os.homedir(), ".claude", "settings.json");
   let existing = {};
@@ -281,9 +347,10 @@ function mergeSettings(config) {
 
   fs.writeFileSync(settingsPath, JSON.stringify(merged, null, 2) + "\n");
   logOk("settings.json updated");
+  logTime(((Date.now() - t) / 1000).toFixed(1));
 }
 
-function printReport(pluginResults) {
+function printReport(pluginResults, totalTime) {
   console.log("\n" + "=".repeat(50));
   console.log(`\x1b[1m ${DRY_RUN ? "Dry-Run" : "Installation"} Report \x1b[0m`);
   console.log("=".repeat(50));
@@ -300,6 +367,7 @@ function printReport(pluginResults) {
   }
 
   console.log("=".repeat(50));
+  console.log(`  Total: ${totalTime}s`);
 
   if (DRY_RUN) {
     console.log("\n\x1b[36mDry run complete. No changes were made.\x1b[0m\n");
@@ -313,6 +381,7 @@ function printReport(pluginResults) {
 // --- Main ---
 
 function main() {
+  const totalStart = Date.now();
   console.log(`\x1b[1mClaude Code Post-Install Script\x1b[0m${DRY_RUN ? " \x1b[36m(dry-run)\x1b[0m" : ""}`);
   console.log("-".repeat(35));
 
@@ -330,7 +399,9 @@ function main() {
   const pluginResults = installPlugins(config);
   deployEccRules(config);
   mergeSettings(config);
-  printReport(pluginResults);
+
+  const totalTime = ((Date.now() - totalStart) / 1000).toFixed(1);
+  printReport(pluginResults, totalTime);
 }
 
 main();
