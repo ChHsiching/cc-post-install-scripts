@@ -21,11 +21,11 @@ function logOk(msg) {
 }
 
 function logWarn(msg) {
-  console.log(`  \x1b[33m⚠\x1b[0m ${msg}`);
+  console.log(`  \x1b[33m✘\x1b[0m ${msg}`);
 }
 
 function logErr(msg) {
-  console.log(`  \x1b[31m✖\x1b[0m ${msg}`);
+  console.log(`  \x1b[31m✘\x1b[0m ${msg}`);
 }
 
 function logDry(msg) {
@@ -110,10 +110,17 @@ function addMarketplaces(config) {
       if (combined.includes("already")) {
         logOk(`${name}: already exists`);
       } else {
-        logWarn(`${name}: ${lastLine(combined)}`);
+        logErr(`${name}: ${lastLine(combined)}`);
       }
     }
   }
+}
+
+function updateMarketplaces() {
+  logStep("Updating marketplace caches");
+
+  exec("claude", ["plugin", "marketplace", "update"]);
+  if (!DRY_RUN) logOk("All marketplaces updated");
 }
 
 function tryInstall(plugin) {
@@ -297,7 +304,7 @@ function printReport(pluginResults) {
   if (DRY_RUN) {
     console.log("\n\x1b[36mDry run complete. No changes were made.\x1b[0m\n");
   } else if (pluginResults.failed.length > 0) {
-    console.log("\n\x1b[33mSome plugins failed. Re-run the script to retry.\x1b[0m\n");
+    console.log("\n\x1b[31mSome plugins failed. Re-run the script to retry.\x1b[0m\n");
   } else {
     console.log("\n\x1b[32mAll done!\x1b[0m\n");
   }
@@ -319,6 +326,7 @@ function main() {
 
   checkPrerequisites();
   addMarketplaces(config);
+  updateMarketplaces();
   const pluginResults = installPlugins(config);
   deployEccRules(config);
   mergeSettings(config);
